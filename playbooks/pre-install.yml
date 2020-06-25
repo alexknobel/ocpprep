@@ -1,184 +1,162 @@
- - name: Update all hosts
-   hosts: OSEv3
-   become: true
-   gather_facts: true
-   serial: "100%"
+--- 
+- name: Update all hosts
+  hosts: OSEv3
+  remote_user: root
+  become: yes
+  gather_facts: true
+  serial: "100%"
+   
+  vars:
+    ose_repo_file: ose.repo
+    ose_repo_file_location: /etc/yum.repos.d/ 
+    hosts_file: /etc/hosts
+  tasks:
+  - name: "copy {{ ose_repo_file }} file from Ansible Tower server to all cluster nodes"
+    copy:
+     src: "{{ ose_repo_file_location }}/{{ ose_repo_file }}"
+     dest: "{{ ose_repo_file_location }}"
 
-   tasks:
+  - name: "copy {{ hosts_file }} file from Ansible Tower server to all cluster nodes"
+    copy:
+     src: "{{ hosts_file  }}"
+     dest: "{{ hosts_file }}"
 
-   - name: update resolv file for dns
-     template:
-       src: templates/resolv.j2
-       dest: /etc/resolv.conf
-     when: dns is defined
+  - name: set hostname of each server without cloud FQDN
+    shell: hostnamectl set-hostname {{ ansible_facts['hostname'] }}
+   
+  - name: set time zone of each server to Israel TZ
+    timezone:
+      name: Asia/Jerusalem
+      hwclock: local 
 
-   - include: include/setup_internal_repos.yml
-     when: yumrepo_url is defined
+  - name: install cluster base packages
+    package:
+      name: "{{ item }}"
+      state: present
+    with_items:
+      - wget
+      - git
+      - net-tools
+      - bind-utils
+      - yum-utils
+      - iptables-services
+      - bridge-utils
+      - bash-completion
+      - kexec-tools
+      - sos
+      - psacct
+      - ntp
 
-   - include: include/rhelsubmgr.yml
-     when: rheluser is defined
+  - name:     Configure NTP and start ntp daemon
+    service:  
+      name: ntpd 
+      enabled: yes 
+      state: restarted
 
-   - name: install support packages
-     package:
-       name: "{{item}}"
-       state: present
-     with_items:
-       - wget
-       - git
-       - net-tools
-       - bind-utils
-       - yum-utils
-       - iptables-services
-       - bridge-utils
-       - bash-completion
-       - kexec-tools
-       - sos
-       - psacct
-       - ntp
+- name: preparing for all hosts
+  hosts: all
+  become: yes
+  tasks:
+  - name: update /etc/hosts on all nodes with keepalived-vip
+    lineinfile: 
+      path: /etc/hosts
+      line: '{{ keepalived_vip }}  {{ openshift_master_cluster_public_hostname }}'
+    when: keepalived_vip is defined     
 
-   - name: Install atomic openshift packages
-     package:
-       name: "{{item}}"
-       state: present
-     with_items:
-       - atomic-openshift-docker-excluder{{openshift_pkg_version}}
-       - atomic-openshift-excluder{{openshift_pkg_version}}
-     when: openshift_pkg_version is defined
+- name: preparing on lb hosts
+  hosts: lb
+  become: yes
+  vars:
+    keepalivepkg: keepalived
+  tasks:
+  - name: install keepalived on lb nodes
+    yum:
+      name: "{{ keepalivepkg }}"
+      state: latest
+    when: keepalived_vip is defined
 
-   - name: Install atomic openshift packages
-     package:
-       name: "{{item}}"
-       state: present
-     with_items:
-       - atomic-openshift-docker-excluder
-       - atomic-openshift-excluder
-     when: openshift_pkg_version is not defined
+  - name: create keepalived.conf
+    template: 
+      src: ../templates/keepalived.conf 
+      dest: /etc/keepalived/keepalived.conf
+    when: keepalived_vip is defined
 
-   - name:     Configure NTP | Add server lines to ntp.conf
-     template:
-       src:    templates/ntpconf.j2
-       dest:   /etc/ntp.conf
-     when:     ntp is defined
-     notify:   ntp_restart
-
-   - name:     Configure NTP | start ntp daemon
-     service:  
-       name: ntpd 
-       enabled: yes 
-       state: started
-
-   - name: set hostname
-     hostname:
-       name: "{{ hostname }}"
-
-   - name: Build hosts entry for node
-     lineinfile:
-       path: /etc/hosts
-       line: "{{ ansible_default_ipv4.address }} {{ hostname }}"
-       state: present
-
-   - name: Build hosts file
-     lineinfile:
-       path: /etc/hosts
-       line: "{{ hostvars[item].ansible_default_ipv4.address }} {{ hostvars[item].hostname }}"
-       state: present
-     when: 'buildHostsFile is defined'
-     with_items:
-       - "{{ groups['OSEv3'] }}"
-
-   handlers:
-   - name: ntp_restart
-     service:
-       name: ntpd
-       state: restarted
-
- - hosts: all
-   become: true
-   tasks:
-
-
-   - name: update /etc/hosts on all nodes with ivpcoe-vip
-     lineinfile: 
-       dest: /etc/hosts
-       line: '{{ keepalived_vip }}  {{ openshift_master_cluster_public_hostname }}'
-     when: keepalived_vip is defined     
-
- - hosts: lb
-   become: true
-   tasks:
-
-
-   - name: install keepalived on lb nodes
-     package: 
-       name: "{{item}}"
-     with_items:
-      - keepalived
-     when: keepalived_vip is defined
-
-   - name: create keepalived.conf
-     template: 
-       src: ../templates/keepalived.conf 
-       dest: /etc/keepalived/keepalived.conf
-     when: keepalived_vip is defined
-
-   - name: restart keepalived
-     service: 
-       name: keepalived 
-       state: restarted 
-       enabled: yes
-     when: keepalived_vip is defined
+  - name: restart keepalived service on LB hosts
+    service: 
+      name: keepalived 
+      state: restarted 
+      enabled: true
+    when: keepalived_vip is defined
 
  
- - name: Install Docker
-   hosts: nodes
-   become: true
-   gather_facts: true
-   serial: "100%"
+- name: Install Docker on all cluster nodes
+  hosts: nodes
+  become: yes
+  gather_facts: true
+  serial: "100%"
+  vars:
+    pv_device: xvdc
 
-   tasks:
+  tasks:
+  - name: set SELinux mode to enforced on all cluster nodes
+    selinux:
+      policy: targeted
+      state: enforcing
 
+  - name: Install Docker | install packages
+    yum:
+      name: docker
+      state: latest
+    notify: docker_restart
 
-   - name: Install Docker | install packages
-     package:
-       name: "{{ item }}"
-       state: present
-     with_items:
-       - docker
-       - ethtool
-     notify: docker_restart
+  - name: Install Docker | setup docker storage with devicemapper driver
+    template:
+      src: templates/docker-storage-setup.j2
+      dest: /etc/sysconfig/docker-storage-setup
+    notify: docker_restart
 
-   - name: Install Docker | setup docker storage
-     template:
-       src: templates/docker-storage-setup.j2
-       dest: /etc/sysconfig/docker-storage-setup
-     notify: docker_restart
+  - name: Verify presence of /dev/docker-vg/docker-pool
+    stat:
+      path: /dev/docker-vg/docker-pool
+    register: docker_vg_status
 
-   - name: Verify presence of /dev/docker-vg/docker-pool
-     stat:
-       path: /dev/docker-vg/docker-pool
-     register: docker_vg_status
+  - name: remove /etc/sysconfig/docker-storage old file
+    file:
+      path: /etc/sysconfig/docker-storage
+      state: absent
+    when: docker_vg_status.stat.islnk is not defined
 
-   - name: Run docker-storage-setup
-     command: /usr/bin/docker-storage-setup
-     when: docker_vg_status.stat.islnk is not defined
+  - name: Run docker-storage-setup
+    command: /usr/bin/docker-storage-setup
+    when: docker_vg_status.stat.islnk is not defined
 
-   - name: Install Docker | enable docker
-     service:
-       name: docker
-       state: started
-       enabled: yes
+  - name: update /etc/sysconfig/docker with insecure registry
+    lineinfile:
+      path: /etc/sysconfig/docker
+      line: 'INSECURE_REGISTRY="--insecure-registry {{ openshift_docker_insecure_registries }}"'
+    when: docker_vg_status.stat.islnk is not defined
 
-   - name: setup etcd storage
-     include_tasks: include/etcdlvol.yml
-     when: inventory_hostname in groups['etcd'] and pv_etcd is defined
+  - name: Install Docker | enable docker
+    service:
+      name: docker
+      state: restarted
+      enabled: yes
 
-   - name: remove cloud-init if present
-     package: 
-       name: cloud-init
-       state: absent
+  - name: Docker login from all cluster nodes to the registry
+    docker_login:
+      registry: "{{ openshift_docker_insecure_registries }}"
+      username: aknobel-support
+      password: SuperDuper1973!
+      reauthorize: yes
 
-   handlers:
-   - name: docker_restart
-     service:
-       name: docker
-       state: restarted
+  - name: Start and Enable Network Manager service
+    service:
+      name: NetworkManager
+      state: restarted
+      enabled: yes
+
+  handlers:
+  - name: docker_restart
+    service:
+      name: docker
+      state: restarted
