@@ -1,0 +1,79 @@
+# host group for masters
+[masters]
+ibmc-master01
+ibmc-master02
+ibmc-master03
+
+# host group for etcd
+[etcd]
+ibmc-master01
+ibmc-master02
+ibmc-master03
+
+# Specify load balancer host
+[lb]
+ibmc-haproxy01
+ibmc-haproxy02
+
+
+# host group for nodes, includes region info
+[nodes]
+ibmc-master01 openshift_node_group_name='node-config-master'
+ibmc-master02 openshift_node_group_name='node-config-master'
+ibmc-master03 openshift_node_group_name='node-config-master'
+ibmc-infra01 openshift_node_group_name='node-config-infra'
+ibmc-infra02 openshift_node_group_name='node-config-infra'
+ibmc-infra03 openshift_node_group_name='node-config-infra'
+ibmc-app01 openshift_node_group_name='node-config-compute'
+ibmc-app02 openshift_node_group_name='node-config-compute'
+ibmc-app03 openshift_node_group_name='node-config-compute'
+
+[OSEv3:children]
+masters
+nodes
+etcd
+lb
+
+[OSEv3:vars]
+
+#General Variables
+ansible_ssh_common_args=-o StrictHostKeyChecking=no -o ControlMaster=auto -o ControlPersist=60s -o PreferredAuthentications=publickey
+ansible_ssh_user=root
+openshift_deployment_type=openshift-enterprise
+openshift_release=v3.11
+openshift_image_tag=v3.11.117-2
+openshift_pkg_version="-3.11.117"
+openshift_disable_check=docker_image_availability
+
+#Openshift Nerworking Variables
+os_firewall_use_firewalld=true
+openshift_master_api_port=8443
+openshift_master_console_port=8443
+openshift_master_default_subdomain=apps.ibmc.ose311.example.com
+openshift_master_cluster_hostname=ibmc.ose311.example.com
+openshift_master_cluster_public_hostname=ibmc.ose311.example.com
+
+#Cluster Authentication Variables
+openshift_master_identity_providers=[{'name': 'htpasswd_auth', 'login': 'true', 'challenge': 'true', 'kind': 'HTPasswdPasswordIdentityProvider'}]
+openshift_master_htpasswd_users={'admin':'$apr1$7RaTbgTO$GPdFYZiF.tDsVuUClw/qe/', 'developer': '$apr1$hR5fnrl9$bSlMuG0YqDHuvJ9EOJ8mU/'}
+
+#Modifications Needed for a Disconnected Install
+
+oreg_url=registry01:5000/openshift3/ose-${component}:v3.11.117-2
+openshift_examples_modify_imagestreams=true
+openshift_docker_additional_registries=registry01:5000
+openshift_docker_blocked_registries=registry.access.redhat.com,docker.io,registry.redhat.io
+
+#Image Prefixes
+openshift_web_console_prefix=registry01:5000/openshift3/ose-
+#it was in error# openshift_cockpit_deployer_prefix='registry01:5000/openshift3/'
+openshift_cockpit_deployer_image='registry01:5000/openshift3/registry-console:v3.11.117-2'
+openshift_service_catalog_image_prefix=registry01:5000/openshift3/ose-
+template_service_broker_prefix=registry01:5000/openshift3/ose-
+ansible_service_broker_image_prefix=registry01:5000/openshift3/ose-
+ansible_service_broker_etcd_image_prefix=registry01:5000/rhel7/
+
+openshift_disable_check=disk_availability,docker_storage,memory_availability
+openshift_disable_check=docker_image_availability
+
+osm_etcd_image=registry01:5000/rhel7/etcd:3.2.22
