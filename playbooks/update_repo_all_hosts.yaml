@@ -1,0 +1,16 @@
+---
+- name: Update all hosts
+  hosts: ibmc-master01
+  remote_user: root
+  become: yes
+  gather_facts: false
+  serial: "100%"
+  vars:
+    ose_repo_file: ose.repo
+    ose_repo_file_location: /etc/yum.repos.d/
+    hosts_file: /etc/hosts
+  tasks:
+  - name: "copy {{ ose_repo_file }} file from Ansible Tower server to all cluster nodes"
+    copy:
+      src: "{{ ose_repo_file_location }}/{{ ose_repo_file }}"
+      dest: "{{ ose_repo_file_location }}"
